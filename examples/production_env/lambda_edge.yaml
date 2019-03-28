@@ -1,0 +1,168 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Rendering infrastructure for front-end applications
+
+Parameters:
+  Aliases:
+    Type: CommaDelimitedList
+    Description: Comma Delimited List of all domain aliasses to use for this distribution
+  CertificateArn:
+    Type: String
+    Description: ACM Certificate ARN
+  Sitename:
+    Type: String
+    Description: Name of the site in Linc
+
+Resources:
+  LambdaRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: 'Allow'
+            Principal:
+              Service:
+                - 'lambda.amazonaws.com'
+                - 'edgelambda.amazonaws.com'
+            Action:
+              - 'sts:AssumeRole'
+
+  RenderLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        ZipFile: |
+          exports.handler = (event, context, callback) => {
+            const status = 200
+            const body = 'Hello World'
+            const response = { status, body };
+            callback(null, response); }
+      FunctionName: !Sub
+        - ${sitename}-renderer
+        - { sitename: !Ref Sitename }
+      Handler: index.handler
+      Role: !GetAtt LambdaRole.Arn
+      Runtime: nodejs8.10
+      Timeout: 10
+
+  RenderLambdaVersion:
+    Type: AWS::Lambda::Version
+    Properties:
+      FunctionName: !GetAtt RenderLambda.Arn
+
+  CloudfrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Aliases: !Ref Aliases
+        CacheBehaviors:
+          - PathPattern: /_assets/*
+            Compress: true
+            DefaultTTL: 31536000
+            ForwardedValues:
+              Cookies:
+                Forward: none
+              QueryString: false
+            MaxTTL: 31536000
+            MinTTL: 31536000
+            TargetOriginId: static-assets
+            ViewerProtocolPolicy: https-only
+        Comment: !Sub
+          - ${sitename} Front-end Application
+          - { sitename: !Ref Sitename }
+        DefaultCacheBehavior:
+          AllowedMethods:
+            ['DELETE', 'GET', 'HEAD', 'OPTIONS', 'PATCH', 'POST', 'PUT']
+          Compress: true
+          DefaultTTL: 0
+          ForwardedValues:
+            Cookies:
+              Forward: all
+            Headers:
+              - Accept-Language
+              - CloudFront-Is-Desktop-Viewer
+              - CloudFront-Is-Mobile-Viewer
+              - CloudFront-Is-SmartTV-Viewer
+              - CloudFront-Is-Tablet-Viewer
+              - CloudFront-Viewer-Country
+              - Host
+            QueryString: true
+          LambdaFunctionAssociations:
+            - EventType: origin-request
+              LambdaFunctionARN: !Sub
+                - ${arn}:1
+                - { arn: !GetAtt RenderLambda.Arn }
+          MaxTTL: 31536000
+          MinTTL: 0
+          TargetOriginId: renderer
+          ViewerProtocolPolicy: redirect-to-https
+        Enabled: true
+        HttpVersion: http2
+        IPV6Enabled: true
+        Origins:
+          - CustomOriginConfig:
+              OriginKeepaliveTimeout: 60
+              OriginProtocolPolicy: https-only
+              OriginReadTimeout: 30
+              OriginSSLProtocols:
+                - TLSv1.2
+            DomainName: shared.renderer.linc.sh
+            Id: renderer
+          - CustomOriginConfig:
+              OriginKeepaliveTimeout: 60
+              OriginProtocolPolicy: https-only
+              OriginReadTimeout: 30
+              OriginSSLProtocols:
+                - TLSv1.2
+            DomainName: static-assets.linc.sh
+            Id: static-assets
+            OriginPath: !Sub
+              - '/${sitename}'
+              - { sitename: !Ref Sitename }
+        PriceClass: PriceClass_All
+        ViewerCertificate:
+          AcmCertificateArn: !Ref CertificateArn
+          MinimumProtocolVersion: TLSv1.2_2018
+          SslSupportMethod: sni-only
+
+  DeployUser:
+    Type: AWS::IAM::User
+    Properties:
+      Path: '/'
+      UserName: !Sub
+        - ${sitename}-deploy-lambda-edge
+        - { sitename: !Ref Sitename }
+      Policies:
+        - PolicyName: Lambda_permissions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:EnableReplication*
+                  - lambda:GetFunction
+                  - lambda:UpdateFunctionCode
+                Resource:
+                  - !GetAtt RenderLambda.Arn
+                  - !Sub
+                    - ${arn}:*
+                    - { arn: !GetAtt RenderLambda.Arn }
+        - PolicyName: IAM_permissions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - iam:CreateServiceLinkedRole
+                Resource: '*'
+        - PolicyName: Cloudfront_permissions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudfront:GetDistributionConfig
+                  - cloudfront:UpdateDistribution
+                Resource: '*'
