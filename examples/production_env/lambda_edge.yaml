@@ -44,7 +44,7 @@ Resources:
         - { sitename: !Ref Sitename }
       Handler: index.handler
       Role: !GetAtt LambdaRole.Arn
-      Runtime: nodejs8.10
+      Runtime: nodejs12.x
       Timeout: 10
 
   RenderLambdaVersion:
