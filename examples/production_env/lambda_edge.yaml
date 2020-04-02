@@ -165,4 +165,5 @@ Resources:
                 Action:
                   - cloudfront:GetDistributionConfig
                   - cloudfront:UpdateDistribution
+                  - cloudfront:CreateInvalidation
                 Resource: '*'
